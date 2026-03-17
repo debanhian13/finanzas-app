@@ -1,0 +1,10 @@
+{
+  "name": "FinanzasMX",
+  "short_name": "FinanzasMX",
+  "description": "Control y planeación de gastos personales",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0e0e14",
+  "theme_color": "#0e0e14",
+  "orientation": "portrait"
+}
