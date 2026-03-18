@@ -40,6 +40,9 @@ const initialState = {
   goals: [], // { id, name, targetAmount, deadline, color, accounts: [{id, name, balance}] }
   goalDeposits: [], // { id, goalId, accountId, amount, date, note }
   
+  // Gastos recurrentes
+  recurringExpenses: [], // { id, desc, amount, category, subcategory, cardId, active, createdMonth, createdYear }
+
   // Meses cerrados
   closedMonths: [], // { month, year, summary }
   
@@ -135,26 +138,59 @@ export default function App() {
 
   // ---- Actions ----
   function addExpense(data) {
+    // Handle recurring expenses separately
+    if (data.type === "recurring") {
+      const newRec = {
+        id: genId(),
+        desc: data.desc,
+        amount: parseFloat(data.amount),
+        category: data.category,
+        subcategory: data.subcategory,
+        cardId: data.cardId,
+        active: true,
+        createdMonth: activeMonth,
+        createdYear: activeYear,
+      };
+      updateDeep("recurringExpenses", [...(state.recurringExpenses || []), newRec]);
+      // Also register as expense this month
+      updateDeep("expenses", [...state.expenses, {
+        id: genId(),
+        recurringId: newRec.id,
+        date: data.date,
+        desc: data.desc,
+        amount: parseFloat(data.amount),
+        category: data.category,
+        subcategory: data.subcategory,
+        cardId: data.cardId,
+        type: "recurring",
+      }]);
+      return;
+    }
+
     const newExpenses = [...state.expenses];
     if (data.type === "msi" && data.msiMonths > 1) {
       const parentId = genId();
-      const monthly = data.amount / data.msiMonths;
+      const monthly = Math.round((data.amount / data.msiMonths) * 100) / 100;
       const baseDate = new Date(data.date);
-      for (let i = 0; i < data.msiMonths; i++) {
+      // currentPayment: which payment number we're on right now (1-based)
+      const startAt = Math.max(1, parseInt(data.currentPayment) || 1);
+      const remaining = data.msiMonths - startAt + 1;
+      for (let i = 0; i < remaining; i++) {
         const { month, year } = addMonths(baseDate.getMonth(), baseDate.getFullYear(), i);
         const d = new Date(year, month, baseDate.getDate());
+        const paymentNum = startAt + i;
         newExpenses.push({
           id: i === 0 ? parentId : genId(),
           parentId: i === 0 ? null : parentId,
           date: d.toISOString().split("T")[0],
-          desc: `${data.desc} (${i + 1}/${data.msiMonths})`,
-          amount: Math.round(monthly * 100) / 100,
+          desc: `${data.desc} (${paymentNum}/${data.msiMonths})`,
+          amount: monthly,
           category: data.category,
           subcategory: data.subcategory,
           cardId: data.cardId,
           type: "msi",
           msiMonths: data.msiMonths,
-          msiCurrent: i + 1,
+          msiCurrent: paymentNum,
         });
       }
     } else {
@@ -175,6 +211,50 @@ export default function App() {
     } else {
       updateDeep("expenses", state.expenses.filter(e => e.id !== id));
     }
+  }
+
+  function toggleRecurring(id) {
+    updateDeep("recurringExpenses", (state.recurringExpenses || []).map(r =>
+      r.id === id ? { ...r, active: !r.active } : r
+    ));
+  }
+
+  function deleteRecurring(id) {
+    updateDeep("recurringExpenses", (state.recurringExpenses || []).filter(r => r.id !== id));
+  }
+
+  // Apply active recurring expenses to current month (if not already applied)
+  function applyRecurringToMonth() {
+    const toApply = (state.recurringExpenses || []).filter(r => {
+      if (!r.active) return false;
+      const alreadyExists = state.expenses.some(e =>
+        e.recurringId === r.id &&
+        new Date(e.date).getMonth() === activeMonth &&
+        new Date(e.date).getFullYear() === activeYear
+      );
+      return !alreadyExists;
+    });
+    if (toApply.length === 0) return;
+    const today = new Date().toISOString().split("T")[0];
+    const newExpenses = [
+      ...state.expenses,
+      ...toApply.map(r => ({
+        id: genId(),
+        recurringId: r.id,
+        date: today,
+        desc: r.desc,
+        amount: r.amount,
+        category: r.category,
+        subcategory: r.subcategory,
+        cardId: r.cardId,
+        type: "recurring",
+      }))
+    ];
+    updateDeep("expenses", newExpenses);
+  }
+
+  function editExpense(id, updates) {
+    updateDeep("expenses", state.expenses.map(e => e.id === id ? { ...e, ...updates } : e));
   }
 
   function addCardPayment(data) {
@@ -277,9 +357,14 @@ export default function App() {
           <Expenses
             expenses={monthExpenses} allExpenses={state.expenses}
             cards={state.cards} subcategories={state.subcategories}
+            recurringExpenses={state.recurringExpenses || []}
             activeMonth={activeMonth} activeYear={activeYear}
             onAdd={() => setModal({ type: "addExpense" })}
             onDelete={deleteExpense}
+            onEdit={(expense) => setModal({ type: "editExpense", data: { expense } })}
+            onToggleRecurring={toggleRecurring}
+            onDeleteRecurring={deleteRecurring}
+            onApplyRecurring={applyRecurringToMonth}
           />
         )}
         {activeTab === "cards" && (
@@ -347,6 +432,15 @@ export default function App() {
             <AddDepositForm
               goals={state.goals} goalId={modal.data.goalId} accountId={modal.data.accountId}
               onSave={(data) => { addGoalDeposit(data); setModal(null); }}
+              onClose={() => setModal(null)}
+            />
+          )}
+          {modal.type === "editExpense" && (
+            <EditExpenseForm
+              expense={modal.data.expense}
+              cards={state.cards}
+              subcategories={state.subcategories}
+              onSave={(id, updates) => { editExpense(id, updates); setModal(null); }}
               onClose={() => setModal(null)}
             />
           )}
@@ -475,79 +569,162 @@ function Dashboard({ state, monthExpenses, totalSpent, catBudgets, catSpent, car
 // ============================================================
 // EXPENSES
 // ============================================================
-function Expenses({ expenses, allExpenses, cards, subcategories, activeMonth, activeYear, onAdd, onDelete }) {
+function Expenses({ expenses, allExpenses, cards, subcategories, recurringExpenses, activeMonth, activeYear, onAdd, onDelete, onEdit, onToggleRecurring, onDeleteRecurring, onApplyRecurring }) {
   const [filter, setFilter] = useState("all");
+  const [tab, setTab] = useState("gastos");
   const filtered = filter === "all" ? expenses : expenses.filter(e => e.category === filter);
 
-  // Also show future MSI payments
+  // Future MSI payments
   const futurePayments = allExpenses.filter(e => {
     const d = new Date(e.date);
     const isThisMonth = d.getMonth() === activeMonth && d.getFullYear() === activeYear;
     return !isThisMonth && e.type === "msi";
   });
 
+  const pendingRecurring = recurringExpenses.filter(r => {
+    if (!r.active) return false;
+    return !allExpenses.some(e =>
+      e.recurringId === r.id &&
+      new Date(e.date).getMonth() === activeMonth &&
+      new Date(e.date).getFullYear() === activeYear
+    );
+  });
+
   return (
     <div style={styles.page}>
       <div style={styles.pageHeader}>
-        <div style={styles.sectionTitle}>Gastos del Mes</div>
+        <div style={styles.sectionTitle}>Gastos</div>
         <button style={styles.btnPrimary} onClick={onAdd}>+ Agregar</button>
       </div>
 
-      {/* Filter */}
+      {/* Main tabs */}
       <div style={styles.filterRow}>
-        {[{ id: "all", label: "Todos" }, ...Object.entries(CATEGORIES).map(([k, v]) => ({ id: k, label: v.label }))].map(f => (
-          <button key={f.id} style={{ ...styles.filterBtn, ...(filter === f.id ? styles.filterBtnActive : {}) }}
-            onClick={() => setFilter(f.id)}>
-            {f.label}
+        {[{ id: "gastos", label: "Del mes" }, { id: "recurrentes", label: `🔁 Recurrentes${recurringExpenses.length > 0 ? ` (${recurringExpenses.length})` : ""}` }, { id: "futuros", label: "MSI futuros" }].map(t => (
+          <button key={t.id} style={{ ...styles.filterBtn, ...(tab === t.id ? styles.filterBtnActive : {}) }}
+            onClick={() => setTab(t.id)}>
+            {t.label}
           </button>
         ))}
       </div>
 
-      {/* List */}
-      {filtered.length === 0 ? (
-        <div style={styles.empty}>No hay gastos registrados</div>
-      ) : (
-        <div style={styles.expenseList}>
-          {filtered.map(e => {
-            const card = cards.find(c => c.id === e.cardId);
-            const cat = CATEGORIES[e.category];
-            return (
-              <div key={e.id} style={styles.expenseItem}>
-                <div style={{ ...styles.expenseDot, background: cat?.color || "#555" }} />
-                <div style={styles.expenseInfo}>
-                  <div style={styles.expenseDesc}>{e.desc}</div>
-                  <div style={styles.expenseMeta}>
-                    {cat?.label} {e.subcategory && `› ${e.subcategory}`}
-                    {card && ` · ${card.name}`}
-                    {e.type === "msi" && ` · MSI ${e.msiCurrent}/${e.msiMonths}`}
-                  </div>
-                  <div style={styles.expenseDate}>{e.date}</div>
-                </div>
-                <div style={styles.expenseRight}>
-                  <div style={styles.expenseAmount}>{formatMXN(e.amount)}</div>
-                  <button style={styles.deleteBtn} onClick={() => onDelete(e.id)}>✕</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {futurePayments.length > 0 && (
+      {/* Gastos del mes */}
+      {tab === "gastos" && (
         <>
-          <div style={{ ...styles.sectionTitle, marginTop: 24 }}>Pagos MSI en meses futuros</div>
-          <div style={styles.expenseList}>
-            {futurePayments.slice(0, 10).map(e => (
-              <div key={e.id} style={{ ...styles.expenseItem, opacity: 0.6 }}>
-                <div style={{ ...styles.expenseDot, background: "#888" }} />
-                <div style={styles.expenseInfo}>
-                  <div style={styles.expenseDesc}>{e.desc}</div>
-                  <div style={styles.expenseDate}>{e.date}</div>
-                </div>
-                <div style={styles.expenseAmount}>{formatMXN(e.amount)}</div>
-              </div>
+          {pendingRecurring.length > 0 && (
+            <div style={styles.recurringAlert}>
+              <span>⚠️ {pendingRecurring.length} gasto(s) recurrente(s) sin aplicar este mes</span>
+              <button style={styles.btnSmallPrimary} onClick={onApplyRecurring}>Aplicar</button>
+            </div>
+          )}
+          <div style={styles.filterRow}>
+            {[{ id: "all", label: "Todos" }, ...Object.entries(CATEGORIES).map(([k, v]) => ({ id: k, label: v.label }))].map(f => (
+              <button key={f.id} style={{ ...styles.filterBtn, ...(filter === f.id ? styles.filterBtnActive : {}) }}
+                onClick={() => setFilter(f.id)}>
+                {f.label}
+              </button>
             ))}
           </div>
+          {filtered.length === 0 ? (
+            <div style={styles.empty}>No hay gastos registrados este mes</div>
+          ) : (
+            <div style={styles.expenseList}>
+              {filtered.map(e => {
+                const card = cards.find(c => c.id === e.cardId);
+                const cat = CATEGORIES[e.category];
+                return (
+                  <div key={e.id} style={styles.expenseItem}>
+                    <div style={{ ...styles.expenseDot, background: cat?.color || "#555" }} />
+                    <div style={styles.expenseInfo}>
+                      <div style={styles.expenseDesc}>{e.desc}</div>
+                      <div style={styles.expenseMeta}>
+                        {cat?.label}{e.subcategory && ` › ${e.subcategory}`}
+                        {card && ` · ${card.name}`}
+                        {e.type === "msi" && ` · MSI ${e.msiCurrent}/${e.msiMonths}`}
+                        {e.type === "recurring" && ` · 🔁 Recurrente`}
+                      </div>
+                      <div style={styles.expenseDate}>{e.date}</div>
+                    </div>
+                    <div style={styles.expenseRight}>
+                      <div style={styles.expenseAmount}>{formatMXN(e.amount)}</div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                        <button style={{ ...styles.deleteBtn, color: "#4ECDC4", fontSize: 13 }} onClick={() => onEdit(e)}>✎</button>
+                        <button style={styles.deleteBtn} onClick={() => onDelete(e.id)}>✕</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Recurrentes */}
+      {tab === "recurrentes" && (
+        <>
+          {recurringExpenses.length === 0 ? (
+            <div style={styles.empty}>No hay gastos recurrentes registrados</div>
+          ) : (
+            <div style={styles.expenseList}>
+              {recurringExpenses.map(r => {
+                const card = cards.find(c => c.id === r.cardId);
+                const cat = CATEGORIES[r.category];
+                return (
+                  <div key={r.id} style={{ ...styles.expenseItem, opacity: r.active ? 1 : 0.5 }}>
+                    <div style={{ ...styles.expenseDot, background: r.active ? (cat?.color || "#4ECDC4") : "#555" }} />
+                    <div style={styles.expenseInfo}>
+                      <div style={styles.expenseDesc}>{r.desc}</div>
+                      <div style={styles.expenseMeta}>
+                        {cat?.label}{r.subcategory && ` › ${r.subcategory}`}
+                        {card && ` · ${card.name}`}
+                      </div>
+                      <div style={{ ...styles.expenseDate, color: r.active ? "#4ECDC4" : "#FF6B6B" }}>
+                        {r.active ? "✓ Activo" : "✗ Inactivo"}
+                      </div>
+                    </div>
+                    <div style={styles.expenseRight}>
+                      <div style={styles.expenseAmount}>{formatMXN(r.amount)}</div>
+                      <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                        <button
+                          style={{ ...styles.deleteBtn, color: r.active ? "#FFE66D" : "#4ECDC4", fontSize: 11, border: "1px solid currentColor", borderRadius: 6, padding: "2px 6px" }}
+                          onClick={() => onToggleRecurring(r.id)}>
+                          {r.active ? "Pausar" : "Activar"}
+                        </button>
+                        <button style={{ ...styles.deleteBtn, color: "#FF6B6B44", fontSize: 16 }} onClick={() => {
+                          if (window.confirm(`¿Eliminar "${r.desc}" de recurrentes?`)) onDeleteRecurring(r.id);
+                        }}>✕</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{ color: "#555", fontSize: 12, textAlign: "center", marginTop: 12 }}>
+            Total mensual recurrente: {formatMXN(recurringExpenses.filter(r => r.active).reduce((s, r) => s + r.amount, 0))}
+          </div>
+        </>
+      )}
+
+      {/* MSI futuros */}
+      {tab === "futuros" && (
+        <>
+          {futurePayments.length === 0 ? (
+            <div style={styles.empty}>No hay pagos MSI programados</div>
+          ) : (
+            <div style={styles.expenseList}>
+              {futurePayments.map(e => (
+                <div key={e.id} style={{ ...styles.expenseItem, opacity: 0.7 }}>
+                  <div style={{ ...styles.expenseDot, background: "#888" }} />
+                  <div style={styles.expenseInfo}>
+                    <div style={styles.expenseDesc}>{e.desc}</div>
+                    <div style={styles.expenseDate}>{e.date}</div>
+                  </div>
+                  <div style={styles.expenseAmount}>{formatMXN(e.amount)}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -981,25 +1158,177 @@ function AddExpenseForm({ cards, subcategories, onSave, onClose }) {
   const [form, setForm] = useState({
     desc: "", amount: "", date: today,
     category: "gastos", subcategory: "",
-    cardId: "", type: "unique", msiMonths: 3,
+    cardId: "", type: "unique", msiMonths: 3, currentPayment: 1,
   });
   const f = (k, v) => setForm(s => ({ ...s, [k]: v }));
 
   function submit() {
     if (!form.desc || !form.amount || !form.date) return alert("Completa todos los campos requeridos");
-    onSave({ ...form, amount: parseFloat(form.amount), msiMonths: parseInt(form.msiMonths) });
+    if (form.type === "msi") {
+      const cur = parseInt(form.currentPayment) || 1;
+      const total = parseInt(form.msiMonths);
+      if (cur > total) return alert(`El pago actual no puede ser mayor al total de meses (${total})`);
+    }
+    onSave({ ...form, amount: parseFloat(form.amount), msiMonths: parseInt(form.msiMonths), currentPayment: parseInt(form.currentPayment) || 1 });
   }
 
   const subs = subcategories[form.category] || [];
+  const remaining = parseInt(form.msiMonths) - (parseInt(form.currentPayment) || 1) + 1;
+  const monthly = parseFloat(form.amount) / parseInt(form.msiMonths);
+
+  function CardSelector() {
+    return (
+      <select style={styles.select} value={form.cardId} onChange={e => f("cardId", e.target.value)}>
+        <option value="">— Efectivo / Sin tarjeta —</option>
+        {cards.filter(c => c.type === "debito").length > 0 && (
+          <optgroup label="── Débito">
+            {cards.filter(c => c.type === "debito").map(c => <option key={c.id} value={c.id}>💳 {c.name}</option>)}
+          </optgroup>
+        )}
+        {cards.filter(c => c.type !== "debito").length > 0 && (
+          <optgroup label="── Crédito">
+            {cards.filter(c => c.type !== "debito").map(c => <option key={c.id} value={c.id}>💳 {c.name}</option>)}
+          </optgroup>
+        )}
+      </select>
+    );
+  }
 
   return (
     <div>
       <div style={styles.modalTitle}>Nuevo Gasto</div>
+
+      {/* Payment type tabs */}
+      <div style={styles.typeTabs}>
+        {[
+          { v: "unique", l: "💸 Único" },
+          { v: "msi", l: "📅 MSI" },
+          { v: "recurring", l: "🔁 Recurrente" },
+        ].map(opt => (
+          <button key={opt.v}
+            style={{ ...styles.typeTab, ...(form.type === opt.v ? styles.typeTabActive : {}) }}
+            onClick={() => f("type", opt.v)}>
+            {opt.l}
+          </button>
+        ))}
+      </div>
+
       <label style={styles.label}>Descripción *</label>
-      <input style={styles.input} value={form.desc} onChange={e => f("desc", e.target.value)} placeholder="Ej: Súper Walmart" />
-      <label style={styles.label}>Monto *</label>
+      <input style={styles.input} value={form.desc} onChange={e => f("desc", e.target.value)}
+        placeholder={form.type === "recurring" ? "Ej: Netflix, Telcel Plan" : "Ej: Súper Walmart"} />
+      <label style={styles.label}>Monto {form.type === "msi" ? "total de la compra" : ""} *</label>
       <input style={styles.input} type="number" value={form.amount} onChange={e => f("amount", e.target.value)} placeholder="0.00" />
       <label style={styles.label}>Fecha *</label>
+      <input style={styles.input} type="date" value={form.date} onChange={e => f("date", e.target.value)} />
+      <label style={styles.label}>Categoría</label>
+      <select style={styles.select} value={form.category} onChange={e => f("category", e.target.value)}>
+        {Object.entries(CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
+      </select>
+      {subs.length > 0 && (
+        <>
+          <label style={styles.label}>Subcategoría</label>
+          <select style={styles.select} value={form.subcategory} onChange={e => f("subcategory", e.target.value)}>
+            <option value="">— Seleccionar —</option>
+            {subs.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </>
+      )}
+      <label style={styles.label}>Tarjeta / Cuenta</label>
+      <CardSelector />
+
+      {/* MSI fields */}
+      {form.type === "msi" && (
+        <div style={styles.msiBox}>
+          <div style={styles.msiRow}>
+            <div style={{ flex: 1 }}>
+              <label style={styles.label}>Total de meses</label>
+              <select style={{ ...styles.select, marginBottom: 0 }} value={form.msiMonths} onChange={e => f("msiMonths", e.target.value)}>
+                {[3, 6, 9, 12, 18, 24].map(n => <option key={n} value={n}>{n} MSI</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={styles.label}>Voy en el pago #</label>
+              <input style={{ ...styles.input, marginBottom: 0 }} type="number" min="1" max={form.msiMonths}
+                value={form.currentPayment} onChange={e => f("currentPayment", e.target.value)} />
+            </div>
+          </div>
+          {form.amount && (
+            <div style={styles.msiSummary}>
+              <div style={styles.msiSummaryItem}>
+                <span style={{ color: "#888" }}>Mensualidad</span>
+                <span style={{ color: "#4ECDC4", fontWeight: 700 }}>{formatMXN(isNaN(monthly) ? 0 : monthly)}</span>
+              </div>
+              <div style={styles.msiSummaryItem}>
+                <span style={{ color: "#888" }}>Pagos restantes</span>
+                <span style={{ color: "#FFE66D", fontWeight: 700 }}>{isNaN(remaining) ? "-" : remaining} de {form.msiMonths}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {form.type === "recurring" && (
+        <div style={{ background: "#1a2a2a", borderRadius: 10, padding: 10, marginBottom: 14, fontSize: 12, color: "#4ECDC4" }}>
+          🔁 Se registrará automáticamente cada mes hasta que lo desactives desde la sección de Recurrentes.
+        </div>
+      )}
+
+      <div style={styles.modalActions}>
+        <button style={styles.btnSecondary} onClick={onClose}>Cancelar</button>
+        <button style={styles.btnPrimary} onClick={submit}>Guardar</button>
+      </div>
+    </div>
+  );
+}
+
+function EditExpenseForm({ expense, cards, subcategories, onSave, onClose }) {
+  const [form, setForm] = useState({
+    desc: expense.desc || "",
+    amount: expense.type === "msi" ? (expense.amount * expense.msiMonths) : expense.amount,
+    date: expense.date || "",
+    category: expense.category || "gastos",
+    subcategory: expense.subcategory || "",
+    cardId: expense.cardId || "",
+  });
+  const f = (k, v) => setForm(s => ({ ...s, [k]: v }));
+  const isMsi = expense.type === "msi";
+  const subs = subcategories[form.category] || [];
+
+  function submit() {
+    if (!form.desc || !form.amount || !form.date) return alert("Completa todos los campos");
+    const updates = {
+      desc: form.desc,
+      date: form.date,
+      category: form.category,
+      subcategory: form.subcategory,
+      cardId: form.cardId,
+    };
+    // For MSI, only edit this single payment's amount, desc, date, category
+    if (isMsi) {
+      updates.amount = expense.amount; // keep original split amount unless user changes it
+    } else {
+      updates.amount = parseFloat(form.amount);
+    }
+    onSave(expense.id, updates);
+  }
+
+  return (
+    <div>
+      <div style={styles.modalTitle}>Editar Gasto</div>
+      {isMsi && (
+        <div style={{ background: "#1e2a1e", border: "1px solid #4ECDC444", borderRadius: 10, padding: 10, marginBottom: 14, fontSize: 12, color: "#4ECDC4" }}>
+          📅 Pago MSI {expense.msiCurrent}/{expense.msiMonths} — solo se edita este pago individual
+        </div>
+      )}
+      <label style={styles.label}>Descripción</label>
+      <input style={styles.input} value={form.desc} onChange={e => f("desc", e.target.value)} />
+      {!isMsi && (
+        <>
+          <label style={styles.label}>Monto</label>
+          <input style={styles.input} type="number" value={form.amount} onChange={e => f("amount", e.target.value)} />
+        </>
+      )}
+      <label style={styles.label}>Fecha</label>
       <input style={styles.input} type="date" value={form.date} onChange={e => f("date", e.target.value)} />
       <label style={styles.label}>Categoría</label>
       <select style={styles.select} value={form.category} onChange={e => f("category", e.target.value)}>
@@ -1028,29 +1357,9 @@ function AddExpenseForm({ cards, subcategories, onSave, onClose }) {
           </optgroup>
         )}
       </select>
-      <label style={styles.label}>Tipo de pago</label>
-      <div style={styles.radioRow}>
-        {[{ v: "unique", l: "Pago único" }, { v: "msi", l: "MSI (meses sin intereses)" }].map(opt => (
-          <label key={opt.v} style={styles.radioLabel}>
-            <input type="radio" value={opt.v} checked={form.type === opt.v} onChange={() => f("type", opt.v)} />
-            {opt.l}
-          </label>
-        ))}
-      </div>
-      {form.type === "msi" && (
-        <>
-          <label style={styles.label}>Número de meses</label>
-          <select style={styles.select} value={form.msiMonths} onChange={e => f("msiMonths", e.target.value)}>
-            {[3, 6, 9, 12, 18, 24].map(n => <option key={n} value={n}>{n} meses</option>)}
-          </select>
-          {form.amount && <div style={{ color: "#4ECDC4", fontSize: 13, marginBottom: 8 }}>
-            Mensualidad: {formatMXN(parseFloat(form.amount || 0) / parseInt(form.msiMonths))}
-          </div>}
-        </>
-      )}
       <div style={styles.modalActions}>
         <button style={styles.btnSecondary} onClick={onClose}>Cancelar</button>
-        <button style={styles.btnPrimary} onClick={submit}>Guardar</button>
+        <button style={styles.btnPrimary} onClick={submit}>Guardar cambios</button>
       </div>
     </div>
   );
@@ -1332,6 +1641,20 @@ const styles = {
   modalBox: { background: "#16161f", borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" },
   modalTitle: { fontSize: 18, fontWeight: 700, marginBottom: 20, color: "#fff" },
   modalActions: { display: "flex", gap: 10, marginTop: 8 },
+
+  // Type tabs
+  typeTabs: { display: "flex", gap: 6, marginBottom: 16 },
+  typeTab: { flex: 1, background: "#2a2a3a", border: "none", color: "#888", borderRadius: 10, padding: "10px 6px", fontSize: 13, cursor: "pointer", fontWeight: 600 },
+  typeTabActive: { background: "#4ECDC4", color: "#0e0e14" },
+
+  // MSI box
+  msiBox: { background: "#1e1e2e", borderRadius: 12, padding: 12, marginBottom: 14 },
+  msiRow: { display: "flex", gap: 10, marginBottom: 10 },
+  msiSummary: { display: "flex", justifyContent: "space-between", paddingTop: 8, borderTop: "1px solid #2a2a3a" },
+  msiSummaryItem: { display: "flex", flexDirection: "column", gap: 2, fontSize: 13 },
+
+  // Recurring
+  recurringAlert: { background: "#2a1f0a", border: "1px solid #FFE66D44", borderRadius: 10, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, fontSize: 13, color: "#FFE66D" },
 
   // Tags
   tagList: { display: "flex", flexWrap: "wrap", gap: 6 },
