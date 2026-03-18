@@ -838,14 +838,20 @@ function Settings({ state, update, updateDeep, onAddCard }) {
       {/* Subcategories */}
       <div style={styles.settingsCard}>
         <div style={styles.settingsTitle}>Subcategorías</div>
-        <div style={styles.settingsRow}>
-          <select style={styles.select} value={newSub.cat} onChange={e => setNewSub({ ...newSub, cat: e.target.value })}>
-            {Object.entries(CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </select>
-          <input style={{ ...styles.input, flex: 1, marginBottom: 0 }} value={newSub.name}
+        <label style={styles.label}>Categoría</label>
+        <select style={styles.select} value={newSub.cat} onChange={e => setNewSub({ ...newSub, cat: e.target.value })}>
+          {Object.entries(CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
+        </select>
+        <label style={styles.label}>Nueva subcategoría</label>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <input
+            style={{ ...styles.input, flex: 1, marginBottom: 0 }}
+            value={newSub.name}
             onChange={e => setNewSub({ ...newSub, name: e.target.value })}
-            placeholder="Nueva subcategoría" />
-          <button style={styles.btnPrimary} onClick={addSubcategory}>+</button>
+            placeholder="Ej: Gasolina, Netflix..."
+            onKeyDown={e => e.key === "Enter" && addSubcategory()}
+          />
+          <button style={{ ...styles.btnPrimary, flex: "none", width: 48, fontSize: 20, padding: 0 }} onClick={addSubcategory}>+</button>
         </div>
         {Object.entries(CATEGORIES).map(([key, cat]) => (
           <div key={key} style={{ marginBottom: 12 }}>
