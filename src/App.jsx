@@ -560,71 +560,115 @@ function Expenses({ expenses, allExpenses, cards, subcategories, activeMonth, ac
 function Cards({ cards, cardSummary, expenses, cardPayments, activeMonth, activeYear, onAddPayment, onAddCard }) {
   const [selected, setSelected] = useState(null);
 
-  return (
-    <div style={styles.page}>
-      <div style={styles.pageHeader}>
-        <div style={styles.sectionTitle}>Tarjetas de Crédito</div>
-        <button style={styles.btnPrimary} onClick={onAddCard}>+ Tarjeta</button>
-      </div>
+  const debitSummary = cardSummary.filter(c => c.type === "debito");
+  const creditSummary = cardSummary.filter(c => c.type !== "debito");
 
-      <div style={styles.cardGrid}>
-        {cardSummary.map(card => (
-          <div key={card.id} style={{ ...styles.creditCard, background: `linear-gradient(135deg, ${card.color}99, ${card.color}44)`, borderColor: card.color }}>
+  function renderCard(card) {
+    const isDebito = card.type === "debito";
+    return (
+      <div key={card.id} style={{ ...styles.creditCard, background: `linear-gradient(135deg, ${card.color}99, ${card.color}44)`, borderColor: card.color }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
             <div style={styles.creditCardName}>{card.name}</div>
-            <div style={styles.creditCardType}>{card.type}</div>
-            <div style={styles.creditCardRow}>
-              <div>
-                <div style={styles.creditCardLabel}>Corte: día {card.cutDay}</div>
-                <div style={styles.creditCardLabel}>Pago: día {card.payDay}</div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={styles.creditCardAmount}>{formatMXN(card.totalCharged)}</div>
-                <div style={{ ...styles.paidBadge, background: card.paid ? "#4ECDC4" : card.totalCharged > 0 ? "#FF6B6B" : "#444" }}>
-                  {card.paid ? "✓ Pagada" : card.totalCharged > 0 ? "Pendiente" : "Sin cargos"}
-                </div>
-              </div>
+            <div style={{ ...styles.creditCardType, color: isDebito ? "#A8E6CF" : "#FFE66D" }}>
+              {isDebito ? "💳 Débito" : card.type === "credito_departamental" ? "🏬 Departamental" : "💳 Crédito"}
             </div>
-            <div style={styles.creditCardActions}>
-              <button style={styles.btnSmall} onClick={() => setSelected(selected === card.id ? null : card.id)}>
-                Ver detalle
-              </button>
-              <button style={styles.btnSmallPrimary} onClick={() => onAddPayment(card.id)}>
-                Registrar pago
-              </button>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: isDebito ? 12 : 11, color: isDebito ? "#A8E6CF" : "#aaa" }}>
+              {isDebito ? "Gastos del mes" : "Total cargos"}
             </div>
-
-            {selected === card.id && (
-              <div style={styles.cardDetail}>
-                <div style={styles.cardDetailTitle}>Cargos del mes</div>
-                {expenses.filter(e => {
-                  const d = new Date(e.date);
-                  return e.cardId === card.id && d.getMonth() === activeMonth && d.getFullYear() === activeYear;
-                }).map(e => (
-                  <div key={e.id} style={styles.cardDetailItem}>
-                    <span>{e.desc}</span>
-                    <span>{formatMXN(e.amount)}</span>
-                  </div>
-                ))}
-                <div style={styles.cardDetailTitle}>Pagos registrados</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: isDebito ? "#A8E6CF" : "#fff" }}>
+              {formatMXN(card.totalCharged)}
+            </div>
+            {!isDebito && (
+              <div style={{ ...styles.paidBadge, background: card.paid ? "#4ECDC4" : card.totalCharged > 0 ? "#FF6B6B" : "#444" }}>
+                {card.paid ? "✓ Pagada" : card.totalCharged > 0 ? "Pendiente" : "Sin cargos"}
+              </div>
+            )}
+          </div>
+        </div>
+        {!isDebito && (
+          <div style={{ marginTop: 8 }}>
+            <div style={styles.creditCardLabel}>Corte: día {card.cutDay} &nbsp;·&nbsp; Pago: día {card.payDay}</div>
+          </div>
+        )}
+        <div style={{ ...styles.creditCardActions, marginTop: 10 }}>
+          <button style={styles.btnSmall} onClick={() => setSelected(selected === card.id ? null : card.id)}>
+            {selected === card.id ? "Ocultar" : "Ver detalle"}
+          </button>
+          {!isDebito && (
+            <button style={styles.btnSmallPrimary} onClick={() => onAddPayment(card.id)}>
+              Registrar pago
+            </button>
+          )}
+        </div>
+        {selected === card.id && (
+          <div style={styles.cardDetail}>
+            <div style={styles.cardDetailTitle}>Movimientos del mes</div>
+            {expenses.filter(e => {
+              const d = new Date(e.date);
+              return e.cardId === card.id && d.getMonth() === activeMonth && d.getFullYear() === activeYear;
+            }).length === 0 && <div style={{ color: "#555", fontSize: 12 }}>Sin movimientos</div>}
+            {expenses.filter(e => {
+              const d = new Date(e.date);
+              return e.cardId === card.id && d.getMonth() === activeMonth && d.getFullYear() === activeYear;
+            }).map(e => (
+              <div key={e.id} style={styles.cardDetailItem}>
+                <span>{e.desc}</span>
+                <span>{formatMXN(e.amount)}</span>
+              </div>
+            ))}
+            {!isDebito && (
+              <>
+                <div style={{ ...styles.cardDetailTitle, marginTop: 8 }}>Pagos registrados</div>
+                {cardPayments.filter(p => p.cardId === card.id && p.month === activeMonth && p.year === activeYear).length === 0 && (
+                  <div style={{ color: "#555", fontSize: 12 }}>Sin pagos registrados</div>
+                )}
                 {cardPayments.filter(p => p.cardId === card.id && p.month === activeMonth && p.year === activeYear).map(p => (
                   <div key={p.id} style={{ ...styles.cardDetailItem, color: "#4ECDC4" }}>
                     <span>{p.date} · {p.note || "Pago"}</span>
                     <span>{formatMXN(p.amount)}</span>
                   </div>
                 ))}
-              </div>
+              </>
             )}
           </div>
-        ))}
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.pageHeader}>
+        <div style={styles.sectionTitle}>Mis Tarjetas</div>
+        <button style={styles.btnPrimary} onClick={onAddCard}>+ Tarjeta</button>
       </div>
 
-      {/* Resumen */}
-      <div style={styles.cardTotal}>
-        <span>Total a pagar este mes:</span>
-        <span style={{ color: "#FFE66D", fontWeight: 700 }}>
-          {formatMXN(cardSummary.reduce((s, c) => s + c.totalCharged, 0))}
-        </span>
-      </div>
+      {debitSummary.length > 0 && (
+        <>
+          <div style={styles.sectionTitle}>Cuentas de Débito</div>
+          <div style={styles.cardGrid}>
+            {debitSummary.map(card => renderCard(card))}
+          </div>
+        </>
+      )}
+
+      {creditSummary.length > 0 && (
+        <>
+          <div style={styles.sectionTitle}>Tarjetas de Crédito</div>
+          <div style={styles.cardGrid}>
+            {creditSummary.map(card => renderCard(card))}
+          </div>
+          <div style={styles.cardTotal}>
+            <span>Total crédito a pagar:</span>
+            <span style={{ color: "#FFE66D", fontWeight: 700 }}>
+              {formatMXN(creditSummary.reduce((s, c) => s + c.totalCharged, 0))}
+            </span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -872,12 +916,29 @@ function Settings({ state, update, updateDeep, onAddCard }) {
       <div style={styles.settingsCard}>
         <div style={styles.settingsTitle}>Tarjetas registradas</div>
         {state.cards.map(card => (
-          <div key={card.id} style={styles.settingsCardItem}>
-            <div style={{ ...styles.cardDot, background: card.color }} />
-            <div>
-              <div style={{ color: "#eee", fontWeight: 600 }}>{card.name}</div>
-              <div style={{ color: "#888", fontSize: 12 }}>{card.type} · Corte día {card.cutDay} · Pago día {card.payDay}</div>
+          <div key={card.id} style={{ ...styles.settingsCardItem, justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ ...styles.cardDot, background: card.color }} />
+              <div>
+                <div style={{ color: "#eee", fontWeight: 600 }}>{card.name}</div>
+                <div style={{ color: "#888", fontSize: 12 }}>
+                {card.type === "debito" ? "💳 Débito" : card.type === "credito_departamental" ? "🏬 Crédito departamental" : "💳 Crédito bancaria"}
+                {card.type !== "debito" && ` · Corte día ${card.cutDay} · Pago día ${card.payDay}`}
+              </div>
+              </div>
             </div>
+            <button
+              style={{ background: "none", border: "1px solid #FF6B6B44", color: "#FF6B6B", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}
+              onClick={() => {
+                if (window.confirm(`¿Eliminar "${card.name}"? Se eliminarán también sus cargos y pagos registrados.`)) {
+                  updateDeep("cards", state.cards.filter(c => c.id !== card.id));
+                  updateDeep("expenses", state.expenses.filter(e => e.cardId !== card.id));
+                  updateDeep("cardPayments", state.cardPayments.filter(p => p.cardId !== card.id));
+                }
+              }}
+            >
+              Eliminar
+            </button>
           </div>
         ))}
         <button style={{ ...styles.btnSecondary, marginTop: 8 }} onClick={onAddCard}>+ Agregar tarjeta</button>
@@ -953,10 +1014,19 @@ function AddExpenseForm({ cards, subcategories, onSave, onClose }) {
           </select>
         </>
       )}
-      <label style={styles.label}>Tarjeta</label>
+      <label style={styles.label}>Tarjeta / Cuenta</label>
       <select style={styles.select} value={form.cardId} onChange={e => f("cardId", e.target.value)}>
         <option value="">— Efectivo / Sin tarjeta —</option>
-        {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        {cards.filter(c => c.type === "debito").length > 0 && (
+          <optgroup label="── Débito">
+            {cards.filter(c => c.type === "debito").map(c => <option key={c.id} value={c.id}>💳 {c.name}</option>)}
+          </optgroup>
+        )}
+        {cards.filter(c => c.type !== "debito").length > 0 && (
+          <optgroup label="── Crédito">
+            {cards.filter(c => c.type !== "debito").map(c => <option key={c.id} value={c.id}>💳 {c.name}</option>)}
+          </optgroup>
+        )}
       </select>
       <label style={styles.label}>Tipo de pago</label>
       <div style={styles.radioRow}>
@@ -1011,8 +1081,9 @@ function AddCardPaymentForm({ card, onSave, onClose }) {
 }
 
 function AddCardForm({ onSave, onClose }) {
-  const [form, setForm] = useState({ name: "", type: "bancaria", cutDay: 15, payDay: 5, color: "#4ECDC4" });
+  const [form, setForm] = useState({ name: "", type: "credito_bancaria", cutDay: 15, payDay: 5, color: "#4ECDC4" });
   const f = (k, v) => setForm(s => ({ ...s, [k]: v }));
+  const isDebito = form.type === "debito";
   function submit() {
     if (!form.name) return alert("Ingresa el nombre");
     onSave(form);
@@ -1021,16 +1092,21 @@ function AddCardForm({ onSave, onClose }) {
     <div>
       <div style={styles.modalTitle}>Nueva Tarjeta</div>
       <label style={styles.label}>Nombre</label>
-      <input style={styles.input} value={form.name} onChange={e => f("name", e.target.value)} placeholder="Ej: BBVA Azul" />
+      <input style={styles.input} value={form.name} onChange={e => f("name", e.target.value)} placeholder="Ej: BBVA Nómina" />
       <label style={styles.label}>Tipo</label>
       <select style={styles.select} value={form.type} onChange={e => f("type", e.target.value)}>
-        <option value="bancaria">Bancaria</option>
-        <option value="departamental">Departamental</option>
+        <option value="debito">💳 Débito</option>
+        <option value="credito_bancaria">💳 Crédito bancaria</option>
+        <option value="credito_departamental">🏬 Crédito departamental</option>
       </select>
-      <label style={styles.label}>Día de corte</label>
-      <input style={styles.input} type="number" min="1" max="31" value={form.cutDay} onChange={e => f("cutDay", parseInt(e.target.value))} />
-      <label style={styles.label}>Día límite de pago</label>
-      <input style={styles.input} type="number" min="1" max="31" value={form.payDay} onChange={e => f("payDay", parseInt(e.target.value))} />
+      {!isDebito && (
+        <>
+          <label style={styles.label}>Día de corte</label>
+          <input style={styles.input} type="number" min="1" max="31" value={form.cutDay} onChange={e => f("cutDay", parseInt(e.target.value))} />
+          <label style={styles.label}>Día límite de pago</label>
+          <input style={styles.input} type="number" min="1" max="31" value={form.payDay} onChange={e => f("payDay", parseInt(e.target.value))} />
+        </>
+      )}
       <label style={styles.label}>Color</label>
       <input style={{ ...styles.input, padding: 4, height: 40 }} type="color" value={form.color} onChange={e => f("color", e.target.value)} />
       <div style={styles.modalActions}>
