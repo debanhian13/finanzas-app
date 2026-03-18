@@ -486,6 +486,7 @@ function MonthSelector({ month, year, onChange, isClosed }) {
 // ============================================================
 function Dashboard({ state, monthExpenses, totalSpent, catBudgets, catSpent, cardSummary, activeMonth, activeYear, isClosed, onClose, onNewExpense }) {
   const { income } = state;
+  const [expandedCard, setExpandedCard] = useState(null);
   const remaining = income - totalSpent;
   const pct = income > 0 ? Math.min((totalSpent / income) * 100, 100) : 0;
 
@@ -542,19 +543,55 @@ function Dashboard({ state, monthExpenses, totalSpent, catBudgets, catSpent, car
       {/* Cards Quick View */}
       <div style={styles.sectionTitle}>Tarjetas este mes</div>
       <div style={styles.cardList}>
-        {cardSummary.map(card => (
-          <div key={card.id} style={{ ...styles.cardChip, borderLeft: `4px solid ${card.color}` }}>
-            <div style={styles.cardChipName}>{card.name}</div>
-            <div style={styles.cardChipAmounts}>
-              <span style={{ color: "#ccc" }}>{formatMXN(card.totalCharged)}</span>
-              {card.totalCharged > 0 && (
-                <span style={{ ...styles.paidBadge, background: card.paid ? "#4ECDC4" : "#FF6B6B" }}>
-                  {card.paid ? "✓ Pagada" : "Pendiente"}
-                </span>
+        {cardSummary.map(card => {
+          const isExpanded = expandedCard === card.id;
+          const cardExpenses = monthExpenses.filter(e => e.cardId === card.id);
+          return (
+            <div key={card.id} style={{ ...styles.cardChip, borderLeft: `4px solid ${card.color}`, flexDirection: "column", alignItems: "stretch", cursor: "pointer", padding: 0 }}>
+              <div
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px" }}
+                onClick={() => setExpandedCard(isExpanded ? null : card.id)}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={styles.cardChipName}>{card.name}</div>
+                  <span style={{ fontSize: 11, color: "#555" }}>{isExpanded ? "▲" : "▼"}</span>
+                </div>
+                <div style={styles.cardChipAmounts}>
+                  <span style={{ color: "#ccc", fontWeight: 600 }}>{formatMXN(card.totalCharged)}</span>
+                  {card.totalCharged > 0 && (
+                    <span style={{ ...styles.paidBadge, background: card.paid ? "#4ECDC4" : "#FF6B6B" }}>
+                      {card.paid ? "✓ Pagada" : "Pendiente"}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {isExpanded && (
+                <div style={{ borderTop: `1px solid ${card.color}33`, padding: "8px 14px 12px" }}>
+                  {cardExpenses.length === 0 ? (
+                    <div style={{ color: "#555", fontSize: 12, textAlign: "center", padding: "6px 0" }}>Sin gastos registrados</div>
+                  ) : (
+                    cardExpenses.map(e => (
+                      <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "6px 0", borderBottom: "1px solid #1e1e2e" }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, color: "#ddd" }}>{e.desc}</div>
+                          <div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
+                            {e.date}
+                            {e.type === "msi" && <span style={{ color: "#4ECDC4" }}> · MSI {e.msiCurrent}/{e.msiMonths}</span>}
+                            {e.type === "recurring" && <span style={{ color: "#A8E6CF" }}> · 🔁</span>}
+                          </div>
+                        </div>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#FFE66D", marginLeft: 8 }}>{formatMXN(e.amount)}</span>
+                      </div>
+                    ))
+                  )}
+                  <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 8, fontSize: 12, color: "#888" }}>
+                    Total: <span style={{ color: card.color, fontWeight: 700, marginLeft: 4 }}>{formatMXN(card.totalCharged)}</span>
+                  </div>
+                </div>
               )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Actions */}
