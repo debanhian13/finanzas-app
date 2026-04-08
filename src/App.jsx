@@ -124,6 +124,8 @@ function getMonthWindow(cards, month, year) {
     return { start: new Date(year, month, 1), end: new Date(year, month + 1, 0) };
   }
   const creditCards = cards.filter(c => c.type !== "debito" && c.cutDay);
+  // also treat old type names as credit
+  // (bancaria, departamental are legacy — treat as credit)
   if (creditCards.length === 0) {
     return { start: new Date(year, month, 1), end: new Date(year, month + 1, 0) };
   }
@@ -169,18 +171,24 @@ export default function App() {
   // ---- Derived: card summary using each card's own billing period ----
   const cardSummary = state.cards.map(card => {
     let charges;
-    if (card.type === "debito") {
+    const isDebit = card.type === "debito";
+    if (isDebit) {
       // Debito uses general month window
       charges = state.expenses.filter(e => e.cardId === card.id && isInPeriod(e.date, monthWindow.start, monthWindow.end));
     } else {
-      // Credit card uses its own billing period
-      const period = getCardPeriod(card.cutDay, activeMonth, activeYear);
-      charges = state.expenses.filter(e => e.cardId === card.id && isInPeriod(e.date, period.start, period.end));
+      // Credit card uses its own billing period (needs a valid cutDay)
+      if (card.cutDay) {
+        const period = getCardPeriod(card.cutDay, activeMonth, activeYear);
+        charges = state.expenses.filter(e => e.cardId === card.id && isInPeriod(e.date, period.start, period.end));
+      } else {
+        // fallback: general window
+        charges = state.expenses.filter(e => e.cardId === card.id && isInPeriod(e.date, monthWindow.start, monthWindow.end));
+      }
     }
     const totalCharged = charges.reduce((s, e) => s + e.amount, 0);
     const payments = state.cardPayments.filter(p => p.cardId === card.id && p.month === activeMonth && p.year === activeYear);
     const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
-    const period = card.type !== "debito" ? getCardPeriod(card.cutDay, activeMonth, activeYear) : monthWindow;
+    const period = (card.type !== "debito" && card.cutDay) ? getCardPeriod(card.cutDay, activeMonth, activeYear) : monthWindow;
     return { ...card, totalCharged, totalPaid, paid: totalPaid >= totalCharged && totalCharged > 0, charges, period };
   });
 
@@ -396,6 +404,7 @@ export default function App() {
           <Dashboard
             state={state} monthExpenses={monthExpenses} totalSpent={totalSpent}
             catBudgets={catBudgets} catSpent={catSpent} cardSummary={cardSummary}
+            monthWindow={monthWindow}
             activeMonth={activeMonth} activeYear={activeYear} isClosed={isClosed}
             onClose={() => setModal({ type: "closeMonth" })}
             onNewExpense={() => setModal({ type: "addExpense" })}
@@ -532,7 +541,7 @@ function MonthSelector({ month, year, onChange, isClosed }) {
 // ============================================================
 // DASHBOARD
 // ============================================================
-function Dashboard({ state, monthExpenses, totalSpent, catBudgets, catSpent, cardSummary, activeMonth, activeYear, isClosed, onClose, onNewExpense }) {
+function Dashboard({ state, monthExpenses, totalSpent, catBudgets, catSpent, cardSummary, monthWindow, activeMonth, activeYear, isClosed, onClose, onNewExpense }) {
   const { income } = state;
   const [expandedCard, setExpandedCard] = useState(null);
   const remaining = income - totalSpent;
@@ -590,9 +599,11 @@ function Dashboard({ state, monthExpenses, totalSpent, catBudgets, catSpent, car
 
       {/* Cards Quick View */}
       <div style={styles.sectionTitle}>Tarjetas este mes</div>
-      <div style={{ fontSize: 11, color: "#555", marginBottom: 10, marginTop: -8 }}>
-        Ventana del mes: {monthWindow.start.toLocaleDateString("es-MX", { day: "numeric", month: "short" })} – {monthWindow.end.toLocaleDateString("es-MX", { day: "numeric", month: "short" })}
-      </div>
+      {monthWindow && (
+        <div style={{ fontSize: 11, color: "#555", marginBottom: 10, marginTop: -8 }}>
+          Ventana del mes: {monthWindow.start.toLocaleDateString("es-MX", { day: "numeric", month: "short" })} – {monthWindow.end.toLocaleDateString("es-MX", { day: "numeric", month: "short" })}
+        </div>
+      )}
       <div style={styles.cardList}>
         {cardSummary.map(card => {
           const isExpanded = expandedCard === card.id;
@@ -609,7 +620,7 @@ function Dashboard({ state, monthExpenses, totalSpent, catBudgets, catSpent, car
                     <div style={styles.cardChipName}>{card.name}</div>
                     <span style={{ fontSize: 11, color: "#555" }}>{isExpanded ? "▲" : "▼"}</span>
                   </div>
-                  {card.type !== "debito" && (
+                  {card.type !== "debito" && card.period && (
                     <div style={{ fontSize: 10, color: "#555", marginTop: 2 }}>
                       Corte: {fmt(card.period.start)} – {fmt(card.period.end)}
                     </div>
