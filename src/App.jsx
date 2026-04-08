@@ -98,12 +98,13 @@ function addMonths(month, year, n) {
 // Get the billing period for a card for a given display month/year
 // Period: from (cutDay+1 of prev month) to (cutDay of current month)
 function getCardPeriod(cutDay, month, year) {
+  const cut = parseInt(cutDay); // ensure numeric, not string
   // Start: day after cutDay in previous month
   const prevMonth = month === 0 ? 11 : month - 1;
   const prevYear = month === 0 ? year - 1 : year;
-  const start = new Date(prevYear, prevMonth, cutDay + 1);
-  // End: cutDay of current month
-  const end = new Date(year, month, cutDay);
+  const start = new Date(prevYear, prevMonth, cut + 1);
+  // End: cutDay of current month (inclusive)
+  const end = new Date(year, month, cut);
   return { start, end };
 }
 
