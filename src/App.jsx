@@ -109,13 +109,18 @@ function getCardPeriod(cutDay, month, year) {
 }
 
 // Check if a date falls within a billing period
+// start is inclusive (cutDay+1 of prev month)
+// end is inclusive (cutDay of current month)
+// We use strict day comparison to avoid any off-by-one
 function isInPeriod(dateStr, start, end) {
-  const d = new Date(dateStr);
-  // normalize to midnight
-  const ds = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-  const de = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-  const dd = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  return dd >= ds && dd <= de;
+  if (!dateStr) return false;
+  // Parse date parts directly from string "YYYY-MM-DD" to avoid timezone shifts
+  const parts = dateStr.split("-");
+  const dy = parseInt(parts[0]), dm = parseInt(parts[1]) - 1, dd = parseInt(parts[2]);
+  const dayNum = dy * 10000 + dm * 100 + dd;
+  const startNum = start.getFullYear() * 10000 + start.getMonth() * 100 + start.getDate();
+  const endNum = end.getFullYear() * 10000 + end.getMonth() * 100 + end.getDate();
+  return dayNum >= startNum && dayNum <= endNum;
 }
 
 // Get the general month window: from earliest card start to latest card end
